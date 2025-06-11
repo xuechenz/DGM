@@ -1,0 +1,34 @@
+net.eval()
+
+T, K, SIGMA = 1.0, 100.0, 0.05      
+r_values    = [0.02, 0.05, 0.08]   
+device      = next(net.parameters()).device
+
+t_fixed = 0.0
+
+S_tensor = torch.linspace(60, 140, 200, device=device).unsqueeze(1)
+S_np = S_tensor.cpu().numpy().flatten()
+
+for r_cur in r_values:
+    t_tensor = torch.full_like(S_tensor, t_fixed)
+    r_tensor = torch.full_like(S_tensor, r_cur)
+    X = torch.cat([t_tensor, S_tensor, r_tensor], dim=1)
+
+    with torch.no_grad():
+        u_pred = net(X).cpu().numpy().flatten()
+
+    tau = T
+    d1 = (np.log(S_np / K) + (r_cur + 0.5 * SIGMA**2) * tau) / (SIGMA * math.sqrt(tau))
+    d2 = d1 - SIGMA * math.sqrt(tau)
+    u_exact = S_np * norm.cdf(d1) - K * np.exp(-r_cur * tau) * norm.cdf(d2)
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(S_np, u_pred, label='DGM Prediction')
+    plt.plot(S_np, u_exact, '--', label='BS Analytical')
+    plt.title(f'Option Price at t = 0  (r = {r_cur:.2%})')
+    plt.xlabel('Stock Price $S$')
+    plt.ylabel('Option Price $u(0, S)$')
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
