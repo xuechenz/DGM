@@ -1,0 +1,38 @@
+import pandas as pd
+net.eval()
+T, K, SIGMA = 1.0, 100.0, 0.05      
+r_values    = [0.02, 0.05, 0.08]   
+device      = next(net.parameters()).device
+t_fixed = 0.0
+device= next(net.parameters()).device
+S_tensor = torch.linspace(60, 140, 200, device=device).unsqueeze(1)
+S_np = S_tensor.cpu().numpy()
+
+metrics = []
+with torch.no_grad():
+    for r in r_values:
+        t_tensor = torch.zeros_like(S_tensor)
+        r_tensor = torch.full_like(S_tensor, r)
+        X = torch.cat([t_tensor, S_tensor, r_tensor], dim=1)
+        u_pred = net(X).cpu().numpy().flatten()
+
+        tau = T
+        d1 = (np.log(S_np / K) + (r + 0.5 * SIGMA**2) * tau) / (SIGMA * math.sqrt(tau))
+        d2 = d1 - SIGMA * math.sqrt(tau)
+        u_exact = (S_np * norm.cdf(d1) - K * np.exp(-r * tau) * norm.cdf(d2)).flatten()
+
+        abs_err = np.abs(u_pred - u_exact)
+        rel_err = abs_err / (u_exact + 1e-12)
+
+        threshold = 1.0
+        rel_err   = abs_err[u_exact >= threshold] / u_exact[u_exact >= threshold]
+        metrics.append({
+            "r": r,
+            "Max Avg Err": abs_err.mean(),
+            "Max Abs Err": abs_err.max(),
+            "Max Avg Pct Err(%)": rel_err.mean()*100
+        })
+
+
+df = pd.DataFrame(metrics).set_index("r").round(6)
+print(df)
