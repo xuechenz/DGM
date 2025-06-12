@@ -10,10 +10,10 @@ def sampler(batch, T, S_Max,
     S   = torch.rand(batch,1, device=device)*S_Max
     r   = torch.rand(batch,1, device=device)*(R_Max-R_Min)+R_Min
     sig = torch.rand(batch,1, device=device)*(SIG_Max-SIG_Min)+SIG_Min
-    K_  = torch.rand(batch,1, device=device)*(K_Max-K_Min)+K_Min  
+    K_  = torch.rand(batch,1, device=device)*(K_Max-K_Min)+K_Min
     X_in = torch.cat([t,S,r,sig,K_], dim=1)
 
-    X_T = X_in.clone(); X_T[:,0:1] = T        
+    X_T = X_in.clone(); X_T[:,0:1] = T
 
     t_b   = torch.rand_like(t)
     r_b   = torch.rand_like(r)*(R_Max-R_Min)+R_Min
@@ -24,30 +24,51 @@ def sampler(batch, T, S_Max,
     X_b   = torch.cat([X_b0, X_b1], dim=0)
     return X_in, X_T, X_b
 
-
-
-def pde_residual(net, X):
+def pde_residual(net, X, delta=1e-3, mc_samples=2):
     X = X.clone().requires_grad_(True)
     u   = net(X)
-    grad= torch.autograd.grad(u, X, torch.ones_like(u), create_graph=True)[0]
+    grad= torch.autograd.grad(u, X, torch.ones_like(u),
+                              create_graph=True)[0]
     u_t, u_S = grad[:,0:1], grad[:,1:2]
-    u_SS = torch.autograd.grad(u_S, X, torch.ones_like(u_S),
-                               create_graph=True)[0][:,1:2]
-    t, S, r, sig = X[:,0:1], X[:,1:2], X[:,2:3], X[:,3:4]
-    return u_t + 0.5*sig**2 * S**2 * u_SS + r*S*u_S - r*u
+    eps = torch.randn(mc_samples, *u_S.shape, device=X.device) \
+          * math.sqrt(delta)
+    # Avoid zero
+    eps = eps + 1e-8 * eps.sign()
+
+    S   = X[:,1:2]                              
+    sig = X[:,3:4]    
+    # S + Sigma * S * eps                         
+    S_pert = S + sig * S * eps                  
+
+    X_pert = X.repeat(mc_samples, 1)            
+    X_pert[:,1:2] = S_pert.view(-1,1)
+
+    u_pert = net(X_pert)  
+    # du/ds_pert                      
+    grad_S_pert = torch.autograd.grad(
+        u_pert.sum(), S_pert, create_graph=True
+    )[0]     
+    # (du/ds_pert - du/ds) / sigma * S * eps                                   
+    diff = (grad_S_pert - u_S) / (sig * S * eps)
+    # second derivatives
+    u_SS_mc = diff.mean(dim=0)                 
+    t, r = X[:,0:1], X[:,2:3]
+
+    return u_t + 0.5 * sig**2 * S**2 * u_SS_mc + r*S*u_S - r*u
+
 
 
 def loss_fn(net, X_in, X_T, X_b, S_Max, T):
     loss_pde = torch.mean(pde_residual(net, X_in)**2)
 
     u_T    = net(X_T)
-    payoff = torch.relu(X_T[:,1:2] - X_T[:,4:5])   
+    payoff = torch.relu(X_T[:,1:2] - X_T[:,4:5])
     loss_T = torch.mean((u_T - payoff)**2)
 
     u_b    = net(X_b)
     t_b, S_b, r_b, K_b = X_b[:,0:1], X_b[:,1:2], X_b[:,2:3], X_b[:,4:5]
     N      = X_b.shape[0]//2
-    bc0    = u_b[:N]                        
+    bc0    = u_b[:N]
     bc1    = u_b[N:] - (S_Max - K_b[N:]*torch.exp(-r_b[N:]*(T-t_b[N:])))
     loss_b = torch.mean(bc0**2) + torch.mean(bc1**2)
 
@@ -78,14 +99,14 @@ class DGMBlock(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(self, x, s_prev, s_first):
-        z = self.act(self.U_z(x) + self.W_z(s_prev))         
-        g = self.act(self.U_g(x) + self.W_g(s_first))       
-        r = self.act(self.U_r(x) + self.W_r(s_prev))       
-        h = self.act(self.U_h(x) + self.W_h(s_prev * r))    
+        z = self.act(self.U_z(x) + self.W_z(s_prev))
+        g = self.act(self.U_g(x) + self.W_g(s_first))
+        r = self.act(self.U_r(x) + self.W_r(s_prev))
+        h = self.act(self.U_h(x) + self.W_h(s_prev * r))
 
-        s_next = (1.0 - g) * h + z * s_prev                 
+        s_next = (1.0 - g) * h + z * s_prev
         return s_next
-      
+
 class DGMNet(nn.Module):
     def __init__(self, input_dim=5, hidden_dim=64, n_layers=3):
         super().__init__()
@@ -114,7 +135,7 @@ class DGMNet(nn.Module):
 
 if __name__ == "__main__":
     T, K, R, SIGMA, S_Max = 1.0, 100.0, 0.02, 0.05, 200.0
-    batch, epochs, lr = 2048, 10000, 1e-3
+    batch, epochs, lr = 2048, 5000, 1e-3
     R_Min, R_Max = 0.0, 0.1
     K_Min, K_Max = 95.0, 105.0
     Sig_min, Sig_max = 0.05, 0.1
@@ -136,10 +157,10 @@ if __name__ == "__main__":
         if epoch % 500 == 0:
             print(f"Epoch {epoch:>4}: total={loss.item():.2e}, PDE={l_pde:.2e}, "
                   f"T={l_T:.2e}, B={l_b:.2e}")
-            
-    end_time = time.time()  
+
+    end_time = time.time()
     elapsed_time = end_time - start_time
-    print(f"Training completed in {elapsed_time:.2f} seconds.") 
+    print(f"Training completed in {elapsed_time:.2f} seconds.")
 
     filename = f"DGM_{lr}_{batch}_{epochs}.pth"
     torch.save(net.state_dict(), filename)
