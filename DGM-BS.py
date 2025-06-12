@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import time
+import math
 
 def sampler(batch, T, S_Max,
             R_Min, R_Max, SIG_Min, SIG_Max,
@@ -29,31 +30,42 @@ def sampler(batch, T, S_Max,
     return X_in, X_T, X_b
 
 def pde_residual(net, X, delta=1e-3, mc_samples=2):
-    X = X.clone().requires_grad_(True)
-    u    = net(X)
-    grad = torch.autograd.grad(u, X, torch.ones_like(u),
-                               create_graph=True)[0]
-    u_t, u_S = grad[:,0:1], grad[:,1:2]
+    mc_samples = max(2, mc_samples)
+    if mc_samples % 2 != 0:
+        mc_samples += 1 
 
-    eps = torch.randn(mc_samples, *u_S.shape, device=X.device) * math.sqrt(delta)
+    X = X.clone().requires_grad_(True)
+    u = net(X)
+    grad = torch.autograd.grad(u, X, torch.ones_like(u), create_graph=True)[0]
+    u_t, u_S = grad[:, 0:1], grad[:, 1:2] 
+
+    S   = X[:, 1:2]
+    r   = X[:, 2:3]
+    sig = X[:, 3:4]
+
+    # Antithetic noise: (+eps, -eps)
+    half = mc_samples // 2
+    eps = torch.randn(half, *u_S.shape, device=X.device) * math.sqrt(delta)
+    eps = torch.cat([eps, -eps], dim=0)
     eps = eps + 1e-8 * eps.sign()  # avoid zero
 
-    S   = X[:,1:2]
-    sig = X[:,3:4]
-    S_pert = S + sig * S * eps  # perturbed S
+    # S_pert = S + sig * S * eps
+    S_pert = (S + sig * S * eps).detach().requires_grad_(True)
 
     X_pert = X.repeat(mc_samples, 1)
-    X_pert[:,1:2] = S_pert.view(-1,1)
+    X_pert[:, 1:2] = S_pert.reshape(-1, 1)
 
     u_pert = net(X_pert)
-    grad_S_pert = torch.autograd.grad(u_pert.sum(), S_pert, create_graph=True)[0]
+    grad_pert = torch.autograd.grad(u_pert, X_pert, torch.ones_like(u_pert), create_graph=True)[0]
+    u_S_pert = grad_pert[:, 1:2]
 
     # (du/dS_pert - du/dS) / (sigma * S * eps)
-    diff = (grad_S_pert - u_S) / (sig * S * eps)
-    u_SS_mc = diff.mean(dim=0)  # approximate d^2u/dS^2 by MC
+    eps_flat = eps.reshape(-1, 1)
+    diff = (u_S_pert - u_S.repeat(mc_samples, 1)) / (sig.repeat(mc_samples, 1) * S.repeat(mc_samples, 1) * eps_flat)
+    u_SS_mc = diff.mean(dim=0)
 
-    t, r = X[:,0:1], X[:,2:3]
-    return u_t + 0.5 * sig**2 * S**2 * u_SS_mc + r*S*u_S - r*u
+    return u_t + 0.5 * sig**2 * S**2 * u_SS_mc + r * S * u_S - r * u
+
 
 
 
@@ -135,7 +147,7 @@ class DGMNet(nn.Module):
 
 if __name__ == "__main__":
     T, K, R, SIGMA, S_Max = 1.0, 100.0, 0.02, 0.05, 200.0
-    batch, epochs, lr = 2048, 5000, 1e-3
+    batch, epochs, lr = 2048, 10000, 1e-3
     R_Min, R_Max = 0.0, 0.1
     K_Min, K_Max = 95.0, 105.0
     Sig_min, Sig_max = 0.05, 0.1
