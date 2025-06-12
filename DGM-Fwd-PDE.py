@@ -124,7 +124,7 @@ class DGMNet(nn.Module):
   
 
 if __name__ == "__main__":
-    batch, epochs, lr = 2048, 8000, 1e-3
+    batch, epochs, lr = 2048, 8000, 1e-4
     eps0, eps_min = 0.5, 0.05         
     log_every = 500                    
 
@@ -134,7 +134,7 @@ if __name__ == "__main__":
 
     start = time.time()
     for ep in range(1, epochs + 1):
-        eps = max(eps_min, eps0 * (0.999 ** ep))       
+        eps = 0.1      
         X_in, X_ic, X_b, S_mass = sampler(batch, eps, device)
 
         loss_tot, loss_pde, loss_ic, loss_bc, loss_mass = \
@@ -150,5 +150,4 @@ if __name__ == "__main__":
                   f"BC={loss_bc.item():.3e} | Mass={loss_mass.item():.3e}")
 
     print(f"Training finished in {time.time() - start:.1f} s")
-    torch.save(net.state_dict(), "DGM_forward_simple.pth")
-
+    torch.save(net.state_dict(), "DGM_forward.pth")
