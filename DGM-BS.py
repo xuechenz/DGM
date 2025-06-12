@@ -6,15 +6,19 @@ import time
 def sampler(batch, T, S_Max,
             R_Min, R_Max, SIG_Min, SIG_Max,
             K_Min, K_Max, device):
+    # Internal points: (t, S, r, sigma, K) uniformly sampled in the domain
     t   = torch.rand(batch,1, device=device)*T
     S   = torch.rand(batch,1, device=device)*S_Max
     r   = torch.rand(batch,1, device=device)*(R_Max-R_Min)+R_Min
     sig = torch.rand(batch,1, device=device)*(SIG_Max-SIG_Min)+SIG_Min
     K_  = torch.rand(batch,1, device=device)*(K_Max-K_Min)+K_Min
-    X_in = torch.cat([t,S,r,sig,K_], dim=1)
+    X_in = torch.cat([t, S, r, sig, K_], dim=1)
 
-    X_T = X_in.clone(); X_T[:,0:1] = T
+    # Terminal points: set t = T
+    X_T = X_in.clone()
+    X_T[:,0:1] = T
 
+    # Boundary condition points: S = 0 and S = S_Max
     t_b   = torch.rand_like(t)
     r_b   = torch.rand_like(r)*(R_Max-R_Min)+R_Min
     sig_b = torch.rand_like(sig)*(SIG_Max-SIG_Min)+SIG_Min
@@ -26,55 +30,51 @@ def sampler(batch, T, S_Max,
 
 def pde_residual(net, X, delta=1e-3, mc_samples=2):
     X = X.clone().requires_grad_(True)
-    u   = net(X)
-    grad= torch.autograd.grad(u, X, torch.ones_like(u),
-                              create_graph=True)[0]
+    u    = net(X)
+    grad = torch.autograd.grad(u, X, torch.ones_like(u),
+                               create_graph=True)[0]
     u_t, u_S = grad[:,0:1], grad[:,1:2]
-    eps = torch.randn(mc_samples, *u_S.shape, device=X.device) \
-          * math.sqrt(delta)
-    # Avoid zero
-    eps = eps + 1e-8 * eps.sign()
 
-    S   = X[:,1:2]                              
-    sig = X[:,3:4]    
-    # S + Sigma * S * eps                         
-    S_pert = S + sig * S * eps                  
+    eps = torch.randn(mc_samples, *u_S.shape, device=X.device) * math.sqrt(delta)
+    eps = eps + 1e-8 * eps.sign()  # avoid zero
 
-    X_pert = X.repeat(mc_samples, 1)            
+    S   = X[:,1:2]
+    sig = X[:,3:4]
+    S_pert = S + sig * S * eps  # perturbed S
+
+    X_pert = X.repeat(mc_samples, 1)
     X_pert[:,1:2] = S_pert.view(-1,1)
 
-    u_pert = net(X_pert)  
-    # du/ds_pert                      
-    grad_S_pert = torch.autograd.grad(
-        u_pert.sum(), S_pert, create_graph=True
-    )[0]     
-    # (du/ds_pert - du/ds) / sigma * S * eps                                   
-    diff = (grad_S_pert - u_S) / (sig * S * eps)
-    # second derivatives
-    u_SS_mc = diff.mean(dim=0)                 
-    t, r = X[:,0:1], X[:,2:3]
+    u_pert = net(X_pert)
+    grad_S_pert = torch.autograd.grad(u_pert.sum(), S_pert, create_graph=True)[0]
 
+    # (du/dS_pert - du/dS) / (sigma * S * eps)
+    diff = (grad_S_pert - u_S) / (sig * S * eps)
+    u_SS_mc = diff.mean(dim=0)  # approximate d^2u/dS^2 by MC
+
+    t, r = X[:,0:1], X[:,2:3]
     return u_t + 0.5 * sig**2 * S**2 * u_SS_mc + r*S*u_S - r*u
 
 
 
 def loss_fn(net, X_in, X_T, X_b, S_Max, T):
-    loss_pde = torch.mean(pde_residual(net, X_in)**2)
+    res = pde_residual(net, X_in)
+    loss_pde = torch.mean(res**2)
 
     u_T    = net(X_T)
-    payoff = torch.relu(X_T[:,1:2] - X_T[:,4:5])
+    payoff = torch.relu(X_T[:,1:2] - X_T[:,4:5])  # S - K
     loss_T = torch.mean((u_T - payoff)**2)
 
-    u_b    = net(X_b)
+    u_b    = net(X_b)  # Boundary prediction
     t_b, S_b, r_b, K_b = X_b[:,0:1], X_b[:,1:2], X_b[:,2:3], X_b[:,4:5]
-    N      = X_b.shape[0]//2
-    bc0    = u_b[:N]
-    bc1    = u_b[N:] - (S_Max - K_b[N:]*torch.exp(-r_b[N:]*(T-t_b[N:])))
+    N = X_b.shape[0]//2
+    bc0 = u_b[:N]
+    bc1 = u_b[N:] - (S_Max - K_b[N:] * torch.exp(-r_b[N:] * (T - t_b[N:])))  # discounted intrinsic
     loss_b = torch.mean(bc0**2) + torch.mean(bc1**2)
 
     return loss_pde+loss_T+loss_b, loss_pde, loss_T, loss_b
 
-
+# DGM Blocks
 class DGMBlock(nn.Module):
     def __init__(self, in_dim: int, hidden_dim: int):
         super().__init__()
@@ -106,7 +106,7 @@ class DGMBlock(nn.Module):
 
         s_next = (1.0 - g) * h + z * s_prev
         return s_next
-
+#DGM Net
 class DGMNet(nn.Module):
     def __init__(self, input_dim=5, hidden_dim=64, n_layers=3):
         super().__init__()
@@ -141,6 +141,7 @@ if __name__ == "__main__":
     Sig_min, Sig_max = 0.05, 0.1
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Model initialization & training
     net = DGMNet(hidden_dim=32).to(device)
     optimizer = optim.Adam(net.parameters(), lr=lr)
     start_time = time.time()
