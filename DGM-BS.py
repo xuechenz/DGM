@@ -3,57 +3,56 @@ import torch.nn as nn
 import torch.optim as optim
 import time
 
-def sampler(batch_size, T, S_Max, R_Min, R_Max, device):
-    # Internal points sample (t, S, r) uniformly in [0,T] * [0,S_MAX] * [r_min, r_max]
-    t   = torch.rand(batch_size,1, device=device)*T
-    S   = torch.rand(batch_size,1, device=device)*S_Max
-    r   = torch.rand(batch_size,1, device=device)*(R_Max-R_Min)+R_Min   
-    X_in = torch.cat([t, S, r], dim=1)
+def sampler(batch, T, S_Max,
+            R_Min, R_Max, SIG_Min, SIG_Max,
+            K_Min, K_Max, device):
+    t   = torch.rand(batch,1, device=device)*T
+    S   = torch.rand(batch,1, device=device)*S_Max
+    r   = torch.rand(batch,1, device=device)*(R_Max-R_Min)+R_Min
+    sig = torch.rand(batch,1, device=device)*(SIG_Max-SIG_Min)+SIG_Min
+    K_  = torch.rand(batch,1, device=device)*(K_Max-K_Min)+K_Min  
+    X_in = torch.cat([t,S,r,sig,K_], dim=1)
 
-    # Terminal points: t = T, S, r in [0, S_MAX, [r_min, r_max]]
-    t_T = torch.full_like(t, T)
-    S_T = torch.rand_like(S)*S_Max
-    r_T = torch.rand_like(r) * (R_Max - R_Min) + R_Min
-    X_T = torch.cat([t_T, S_T, r_T], dim=1)
+    X_T = X_in.clone(); X_T[:,0:1] = T        
 
-    # Boundary condition points:
-    t_b = torch.rand_like(t)
-    r_b = torch.rand_like(r) * (R_Max - R_Min) + R_Min
-    X_b0 = torch.cat([t_b, torch.zeros_like(S), r_b], dim=1)
-    X_b1 = torch.cat([t_b, torch.full_like(S, S_Max), r_b], dim=1)
-    X_b  = torch.cat([X_b0, X_b1], dim=0)
+    t_b   = torch.rand_like(t)
+    r_b   = torch.rand_like(r)*(R_Max-R_Min)+R_Min
+    sig_b = torch.rand_like(sig)*(SIG_Max-SIG_Min)+SIG_Min
+    K_b   = torch.rand_like(K_)*(K_Max-K_Min)+K_Min
+    X_b0  = torch.cat([t_b, torch.zeros_like(S),      r_b, sig_b, K_b], dim=1)
+    X_b1  = torch.cat([t_b, torch.full_like(S,S_Max), r_b, sig_b, K_b], dim=1)
+    X_b   = torch.cat([X_b0, X_b1], dim=0)
     return X_in, X_T, X_b
 
-def pde_residual(net, X, SIGMA):
-    # Use autograd find derivatives 
+
+
+def pde_residual(net, X):
     X = X.clone().requires_grad_(True)
-    u = net(X)
-    grads = torch.autograd.grad(u, X, torch.ones_like(u),
-                                create_graph=True)[0]
-    u_t, u_S = grads[:, 0:1], grads[:, 1:2]
+    u   = net(X)
+    grad= torch.autograd.grad(u, X, torch.ones_like(u), create_graph=True)[0]
+    u_t, u_S = grad[:,0:1], grad[:,1:2]
     u_SS = torch.autograd.grad(u_S, X, torch.ones_like(u_S),
-                               create_graph=True)[0][:, 1:2]
-    t, S, r = X[:, 0:1], X[:, 1:2], X[:, 2:3]  
-    return u_t + 0.5*SIGMA**2*S**2*u_SS + r*S*u_S - r*u
+                               create_graph=True)[0][:,1:2]
+    t, S, r, sig = X[:,0:1], X[:,1:2], X[:,2:3], X[:,3:4]
+    return u_t + 0.5*sig**2 * S**2 * u_SS + r*S*u_S - r*u
 
 
-def loss_fn(net, X_in, X_T, X_b, K, S_Max, T, SIGMA):
-    res = pde_residual(net, X_in, SIGMA)
-    loss_pde = torch.mean(res**2)
+def loss_fn(net, X_in, X_T, X_b, S_Max, T):
+    loss_pde = torch.mean(pde_residual(net, X_in)**2)
 
-    u_T = net(X_T)
-    payoff = torch.relu(X_T[:, 1:2] - K) # Payoff at terminal 
+    u_T    = net(X_T)
+    payoff = torch.relu(X_T[:,1:2] - X_T[:,4:5])   
     loss_T = torch.mean((u_T - payoff)**2)
 
-    u_b   = net(X_b) # Boundary prediction
-    t_b   = X_b[:, 0:1]
-    r_b   = X_b[:, 2:3]
-    N_b   = X_b.shape[0] // 2
-    bc0_diff = u_b[:N_b]
-    bc1_diff = u_b[N_b:] - (S_Max - K*torch.exp(-r_b[N_b:]*(T - t_b[N_b:]))) # Use r calculate loss
-    loss_b = torch.mean(bc0_diff**2) + torch.mean(bc1_diff**2)
-    total = loss_pde + loss_T + loss_b
-    return total, loss_pde, loss_T, loss_b
+    u_b    = net(X_b)
+    t_b, S_b, r_b, K_b = X_b[:,0:1], X_b[:,1:2], X_b[:,2:3], X_b[:,4:5]
+    N      = X_b.shape[0]//2
+    bc0    = u_b[:N]                        
+    bc1    = u_b[N:] - (S_Max - K_b[N:]*torch.exp(-r_b[N:]*(T-t_b[N:])))
+    loss_b = torch.mean(bc0**2) + torch.mean(bc1**2)
+
+    return loss_pde+loss_T+loss_b, loss_pde, loss_T, loss_b
+
 
 class DGMBlock(nn.Module):
     def __init__(self, in_dim: int, hidden_dim: int):
@@ -88,7 +87,7 @@ class DGMBlock(nn.Module):
         return s_next
       
 class DGMNet(nn.Module):
-    def __init__(self, input_dim=3, hidden_dim=64, n_layers=3):
+    def __init__(self, input_dim=5, hidden_dim=64, n_layers=3):
         super().__init__()
         self.input_layer = nn.Linear(input_dim, hidden_dim)
         nn.init.xavier_uniform_(self.input_layer.weight)
@@ -117,16 +116,18 @@ if __name__ == "__main__":
     T, K, R, SIGMA, S_Max = 1.0, 100.0, 0.02, 0.05, 200.0
     batch, epochs, lr = 2048, 10000, 1e-3
     R_Min, R_Max = 0.0, 0.1
+    K_Min, K_Max = 95.0, 105.0
+    Sig_min, Sig_max = 0.05, 0.1
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # model and optimizer
     net = DGMNet(hidden_dim=32).to(device)
     optimizer = optim.Adam(net.parameters(), lr=lr)
     start_time = time.time()
-    # training loop
     for epoch in range(1, epochs+1):
-        X_in, X_T, X_b = sampler(batch, T, S_Max, R_Min, R_Max, device)
-        loss, l_pde, l_T, l_b = loss_fn(net, X_in, X_T, X_b, K, S_Max, T, SIGMA)
+        X_in, X_T, X_b = sampler(batch, T, S_Max,
+                         R_Min, R_Max, Sig_min, Sig_max,
+                         K_Min, K_Max, device)
+        loss, l_pde, l_T, l_b = loss_fn(net, X_in, X_T, X_b, S_Max, T)
 
         optimizer.zero_grad()
         loss.backward()
