@@ -55,41 +55,63 @@ def loss_fn(net, X_in, X_T, X_b, K, S_Max, T, SIGMA):
     total = loss_pde + loss_T + loss_b
     return total, loss_pde, loss_T, loss_b
 
-class ResidualBlock(nn.Module):
-    def __init__(self, hidden_dim):
+class DGMBlock(nn.Module):
+    def __init__(self, in_dim: int, hidden_dim: int):
         super().__init__()
-        self.fc1 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.U_z = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_z = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        self.U_g = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_g = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        self.U_r = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_r = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        self.U_h = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_h = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
         self.act = nn.Tanh()
-        # Xavier initialization
-        nn.init.xavier_uniform_(self.fc1.weight)
-        nn.init.xavier_uniform_(self.fc2.weight)
 
-    def forward(self, x):
-        identity = x
-        out = self.act(self.fc1(x))
-        out = self.fc2(out)
-        return self.act(out + identity)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
-class ResNetDGM(nn.Module):
-    def __init__(self, input_dim=3, hidden_dim=64, n_blocks=3):
+    def forward(self, x, s_prev, s_first):
+        z = self.act(self.U_z(x) + self.W_z(s_prev))         
+        g = self.act(self.U_g(x) + self.W_g(s_first))       
+        r = self.act(self.U_r(x) + self.W_r(s_prev))       
+        h = self.act(self.U_h(x) + self.W_h(s_prev * r))    
+
+        s_next = (1.0 - g) * h + z * s_prev                 
+        return s_next
+      
+class DGMNet(nn.Module):
+    def __init__(self, input_dim=3, hidden_dim=64, n_layers=3):
         super().__init__()
         self.input_layer = nn.Linear(input_dim, hidden_dim)
-        # residual blocks
-        self.blocks = nn.ModuleList([
-            ResidualBlock(hidden_dim) for _ in range(n_blocks)
-        ])
-        self.output_layer = nn.Linear(hidden_dim, 1)
-        # Tanh activation for input layer
-        self.act = nn.Tanh()
         nn.init.xavier_uniform_(self.input_layer.weight)
+        nn.init.zeros_(self.input_layer.bias)
+
+        self.blocks = nn.ModuleList([
+            DGMBlock(input_dim, hidden_dim) for _ in range(n_layers)
+        ])
+
+        self.output_layer = nn.Linear(hidden_dim, 1)
         nn.init.xavier_uniform_(self.output_layer.weight)
+        nn.init.zeros_(self.output_layer.bias)
+
+        self.act = nn.Tanh()
 
     def forward(self, x):
-        h = self.act(self.input_layer(x))
+        s = self.act(self.input_layer(x))
+        s_first = s
+
         for block in self.blocks:
-            h = block(h)
-        return self.output_layer(h)
+            s = block(x, s, s_first)
+
+        return self.output_layer(s)
 
 if __name__ == "__main__":
     T, K, R, SIGMA, S_Max = 1.0, 100.0, 0.02, 0.05, 200.0
@@ -98,7 +120,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # model and optimizer
-    net = ResNetDGM(hidden_dim=32).to(device)
+    net = DGMNet(hidden_dim=32).to(device)
     optimizer = optim.Adam(net.parameters(), lr=lr)
     start_time = time.time()
     # training loop
