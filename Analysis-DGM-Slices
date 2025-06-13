@@ -1,0 +1,36 @@
+def bs_forward_density(t, S, S0=100.0, r=0.02, sigma=0.05):
+    S = np.maximum(S, 1e-8)  # 避免 log(0)
+    var = sigma**2 * t
+    coef = 1 / (S * np.sqrt(2 * np.pi * var))
+    expo = - (np.log(S / S0) - (r - 0.5 * sigma**2) * t)**2 / (2 * var)
+    return coef * np.exp(expo)
+
+# ----- 多个时间点比较 -----
+time_list = [0.2, 0.5, 0.8]
+S_plot = np.linspace(1, S_max, 300)
+
+plt.figure(figsize=(12, 4 * len(time_list)))
+
+for i, t_plot in enumerate(time_list, 1):
+    # 模型预测
+    t_tensor = torch.full((len(S_plot), 1), t_plot)
+    S_tensor = torch.tensor(S_plot).reshape(-1,1).float()
+    X_plot = torch.cat([t_tensor, S_tensor], dim=1)
+    with torch.no_grad():
+        p_pred = net(X_plot).squeeze().numpy()
+
+    # 解析解
+    p_true = bs_forward_density(t_plot, S_plot)
+
+    # 画图
+    plt.subplot(len(time_list), 1, i)
+    plt.plot(S_plot, p_pred, label="DGM Prediction", linewidth=2)
+    plt.plot(S_plot, p_true, '--', label="Analytical Solution", linewidth=2)
+    plt.title(f"Density Comparison at t = {t_plot}")
+    plt.xlabel("Stock Price $S$")
+    plt.ylabel("Density $p(t, S)$")
+    plt.legend()
+    plt.grid(True)
+
+plt.tight_layout()
+plt.show()
