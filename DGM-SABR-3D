@@ -6,44 +6,6 @@ from mpl_toolkits.mplot3d import Axes3D
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 net.eval()
-def hagan_iv(F, K, T, alpha, beta, rho, nu,
-             eps=1e-12, sigma_cap=3.0):
-    if abs(F - K) < eps:  
-        term1 = alpha / (F ** (1 - beta))
-        term2 = (((1 - beta) ** 2) / 24) * alpha ** 2 / F ** (2 - 2 * beta)
-        term2 += (rho * beta * nu * alpha) / (4 * F ** (1 - beta))
-        term2 += ((2 - 3 * rho ** 2) * nu ** 2) / 24
-        sigma = term1 * (1 + term2 * T)
-        return min(sigma, sigma_cap)
-
-    FK     = F * K
-    logFK  = math.log(F / K)
-    z      = (nu / alpha) * FK ** ((1 - beta) / 2) * logFK
-    x_z_n  = math.sqrt(1 - 2 * rho * z + z * z) + z - rho
-    x_z_d  = 1 - rho
-    x_z    = math.log((x_z_n + eps) / (x_z_d + eps))
-    z      = z + eps
-
-    A = alpha / (
-        FK ** ((1 - beta) / 2)
-        * (1 + ((1 - beta) ** 2 / 24) * logFK ** 2
-           + ((1 - beta) ** 4 / 1920) * logFK ** 4)
-    )
-    B = z / x_z
-    C = 1 + (
-        ((1 - beta) ** 2 / 24) * (alpha ** 2) / (FK ** (1 - beta))
-        + (rho * beta * nu * alpha) / (4 * FK ** ((1 - beta) / 2))
-        + ((2 - 3 * rho ** 2) * nu ** 2) / 24
-    ) * T
-    sigma = A * B * C
-    return min(sigma, sigma_cap)
-
-def bs_call(F, K, T, sigma):
-    if sigma < 1e-12:
-        return max(F - K, 0.0)
-    d1 = (math.log(F / K) + 0.5 * sigma ** 2 * T) / (sigma * math.sqrt(T))
-    d2 = d1 - sigma * math.sqrt(T)
-    return F * norm.cdf(d1) - K * norm.cdf(d2)
 
 rep_sets = [
     (0.7, 0.4, 0.0),  
@@ -75,13 +37,19 @@ for beta0, nu0, rho0 in rep_sets:
     Hsurf = np.zeros_like(Usurf, dtype=np.float32)
     for i, t0 in enumerate(t_vals):
         tau = T - t0
-        if tau < 1e-8:
+        if tau < 1e-8:                         
             Hsurf[i, :] = np.maximum(F_vals - K0, 0.0)
         else:
             Hsurf[i, :] = [
-                bs_call(float(F_vals[j]), K0, tau,
-                        hagan_iv(float(F_vals[j]), K0, tau,
-                                 alpha0, beta0, rho0, nu0))
+                normal_call(                   
+                    K0,                         
+                    float(F_vals[j]),           
+                    tau,
+                    normal_vol(                 
+                        K0, float(F_vals[j]), tau,
+                        alpha0, beta0, rho0, nu0
+                    )
+                )
                 for j in range(len(F_vals))
             ]
 
@@ -95,7 +63,7 @@ for beta0, nu0, rho0 in rep_sets:
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection='3d')
     ax.plot_surface(Fg, Tg, Hsurf, cmap='plasma', edgecolor='none')
-    ax.set_title(f'Hagan+BS Surface β={beta0}, ν={nu0}, ρ={rho0}')
+    ax.set_title(f'Normal-SABR Surface β={beta0}, ν={nu0}, ρ={rho0}')
     ax.set_xlabel('F'); ax.set_ylabel('t'); ax.set_zlabel('Price')
     plt.show()
 
