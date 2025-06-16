@@ -1,135 +1,169 @@
-import time, math, torch, torch.nn as nn, torch.nn.functional as F
-import torch.optim as optim
+import math, time
+import torch, torch.nn as nn, torch.optim as optim
 
-T, r, sigma = 1.0, 0.02, 0.05
-S_Max, S0   = 200.0, 100.0
+T, r, sigma = 1.0, 0.02, 0.05          
+S0, S_max   = 100.0, 200.0             
+mu_tilde    = r                        
+a = mu_tilde - 0.5 * sigma ** 2        
+y_min = -10.0                         
+y_max = math.log(S_max / S0)          
 
-def sampler(batch, eps, device, use_gbm=True):
-    # Inner-Points
-    t = torch.rand(batch,1,device=device) * T
-    if use_gbm:
-        z = torch.randn_like(t)
-        S = S0*torch.exp((r-0.5*sigma**2)*t + sigma*torch.sqrt(t)*z)
-    else:
-        S = torch.rand(batch,1,device=device) * S_Max
-    X_in = torch.cat([t, S], 1)                     
 
-    # IC
-    S_ic = S0 + eps*torch.randn(batch,1,device=device)
-    X_ic = torch.cat([torch.zeros_like(S_ic), S_ic], 1)
+def sampler(batch, eps, device, tail_frac=0.3):
+    # inner points 
+    batch_gbm = int(batch * (1 - tail_frac))
+    t = torch.rand(batch_gbm, 1, device=device) * T
+    z = torch.randn_like(t)
+    S = S0 * torch.exp((r - 0.5 * sigma**2) * t + sigma * torch.sqrt(t) * z)
+    y = torch.log(S / S0)
 
-    # BC
-    t_b = torch.rand(2*batch,1,device=device) * T
-    S_b = torch.cat([torch.zeros(batch,1,device=device),
-                     torch.full((batch,1), S_Max, device=device)], 0)
-    X_b = torch.cat([t_b, S_b], 1)
+    # tail points 
+    batch_tail = batch - batch_gbm
+    t_tail = torch.rand(batch_tail, 1, device=device) * T
+    y_tail = y_min + (y_max - y_min) * torch.rand(batch_tail, 1, device=device)
 
-    # Mass
-    S_mass = torch.rand(batch,1,device=device) * S_Max
-    return X_in, X_ic, X_b, S_mass
+    # concat
+    t_in = torch.vstack([t, t_tail])
+    y_in = torch.vstack([y, y_tail])
+    X_in = torch.hstack([t_in, y_in])
 
-# MDE Net + ResNet
-class ResBlock(nn.Module):
-    def __init__(self, d):
-        super().__init__()
-        self.fc1, self.fc2 = nn.Linear(d,d), nn.Linear(d,d)
-        nn.init.xavier_uniform_(self.fc1.weight); nn.init.zeros_(self.fc1.bias)
-        nn.init.xavier_uniform_(self.fc2.weight); nn.init.zeros_(self.fc2.bias)
-    def forward(self,x):
-        return torch.tanh(self.fc2(torch.tanh(self.fc1(x)))+x)
+    # ---- initial, boundary, mass 同之前 ----
+    y_ic  = eps * torch.randn(batch, 1, device=device)
+    X_ic  = torch.hstack([torch.zeros_like(y_ic), y_ic])
 
-class MDNpdf(nn.Module):
-    def __init__(self, K=10, hidden=64, n_layers=5):
-        super().__init__()
-        self.K, self.S0 = K, S0
-        self.inp   = nn.Linear(2, hidden)
-        self.blocks= nn.ModuleList([ResBlock(hidden) for _ in range(n_layers)])
-        self.out   = nn.Linear(hidden, 3*K)
+    t_b = torch.rand(2*batch, 1, device=device) * T
+    y_b = torch.vstack([
+        torch.full((batch,1), y_min, device=device),
+        torch.full((batch,1), y_max, device=device)
+    ])
+    X_bc = torch.hstack([t_b, y_b])
 
-    def _split(self, raw):
-        logits, mu_hat, logsig_hat = torch.split(raw, self.K, dim=-1)
-        pi    = torch.softmax(logits, -1)
-        mu    = self.S0*(1+0.3*torch.tanh(mu_hat))
-        sigma = 0.2*self.S0*F.softplus(logsig_hat) + 1e-2
-        return pi, mu, sigma
+    y_mass = y_min + (y_max - y_min) * torch.rand(batch, 1, device=device)
+    return X_in, X_ic, X_bc, y_mass
 
-    def forward(self, x):                      
-        t,S = x[:,:1], x[:,1:2]
-        S_scaled = (S-self.S0)/self.S0
-        h = torch.tanh(self.inp(torch.cat([t,S_scaled],1)))
-        for blk in self.blocks: h = blk(h)
-        pi,mu,sigma = self._split(self.out(h))
-        S = S.expand_as(mu)
-        comp = torch.exp(-0.5*((S-mu)/sigma)**2)/(sigma*math.sqrt(2*math.pi))
-        return (pi*comp).sum(-1,keepdim=True)
 
-    def log_pdf(self,x):
-        return torch.log(self(x)+1e-12)
+# PDE Residual
 
-# PDE Loss
-def fp_residual(net, X):
+def fp_residual(net: nn.Module, X: torch.Tensor):
+    """Return F = q_t + a q_y − ½ σ² q_yy"""
     X.requires_grad_(True)
-    p    = net(X)
-    grad = torch.autograd.grad(p, X, torch.ones_like(p), create_graph=True)[0]
-    p_t, p_S = grad[:,0:1], grad[:,1:2]
-    p_SS = torch.autograd.grad(p_S, X, torch.ones_like(p_S), create_graph=True)[0][:,1:2]
-    S = X[:,1:2]
-    return p_t - ((sigma**2 - r)*p + (2*sigma**2*S - r*S)*p_S + 0.5*sigma**2*S**2*p_SS)
+    q = net(X)
 
-# PDE+IC+BC+Mass+MLE
-def loss_fn(net, X_in, X_ic, X_b, S_mass, eps,
-            lam=dict(mle=1.0,pde=1.0,ic=1.0,bc=1.0,mass=10.0)):
-    # PDE
-    loss_pde = (fp_residual(net, X_in)**2).mean()
+    grad  = torch.autograd.grad(q, X, torch.ones_like(q), create_graph=True)[0]
+    q_t   = grad[:, 0:1]
+    q_y   = grad[:, 1:2]
+    q_yy  = torch.autograd.grad(q_y, X, torch.ones_like(q_y), create_graph=True)[0][:, 1:2]
 
-    # IC
-    p_pred = net(X_ic)
-    p_true = torch.exp(-(X_ic[:,1:2]-S0)**2/(2*eps**2))/(eps*math.sqrt(2*math.pi))
-    loss_ic = ((p_pred-p_true)**2).mean()
+    return q_t + a * q_y - 0.5 * sigma ** 2 * q_yy
 
-    # BC
-    loss_bc = (net(X_b)**2).mean()
+def loss_fn(net: nn.Module,
+            X_in: torch.Tensor,
+            X_ic: torch.Tensor,
+            X_bc: torch.Tensor,
+            y_mass: torch.Tensor,
+            eps: float):
+    # PDE residual
+    res      = fp_residual(net, X_in)
+    loss_pde = (res ** 2).mean()
 
-    # Mass
-    t_mass = torch.rand_like(S_mass)*T
-    X_mass = torch.cat([t_mass, S_mass], 1)
-    loss_mass = ((net(X_mass).mean()*S_Max - 1.0)**2)
+    # Initial condition 
+    q_pred0  = net(X_ic)
+    q_true0  = torch.exp(-(X_ic[:, 1:2] ** 2) / (2 * eps ** 2)) / (eps * math.sqrt(2 * math.pi))
+    loss_ic  = ((q_pred0 - q_true0) ** 2).mean()
 
-    # MLE
-    loss_mle = (-net.log_pdf(X_in)).mean()
+    # Boundary
+    loss_bc  = (net(X_bc) ** 2).mean()
 
-    total = (lam['pde']*loss_pde + lam['ic']*loss_ic + lam['bc']*loss_bc +
-             lam['mass']*loss_mass + lam['mle']*loss_mle)
-    return total, loss_pde, loss_ic, loss_bc, loss_mass, loss_mle
+    # Mass 
+    t_mass   = torch.rand_like(y_mass) * T
+    X_mass   = torch.hstack([t_mass, y_mass])
+    loss_mass = ((net(X_mass).mean() * (y_max - y_min) - 1.0) ** 2)
+
+    total = loss_pde + loss_ic + 0.1 * loss_bc + loss_mass
+    return total, loss_pde, loss_ic, loss_bc, loss_mass
+
+# DGM Blocks
+class DGMBlock(nn.Module):
+    def __init__(self, in_dim: int, hidden_dim: int):
+        super().__init__()
+        self.U_z = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_z = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        self.U_g = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_g = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        self.U_r = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_r = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        self.U_h = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_h = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        self.act = nn.Tanh()
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x, s_prev, s_first):
+        z = self.act(self.U_z(x) + self.W_z(s_prev))
+        g = self.act(self.U_g(x) + self.W_g(s_first))
+        r = self.act(self.U_r(x) + self.W_r(s_prev))
+        h = self.act(self.U_h(x) + self.W_h(s_prev * r))
+
+        s_next = (1.0 - g) * h + z * s_prev
+        return s_next
+#DGM Net
+class DGMNet(nn.Module):
+    def __init__(self, input_dim=2, hidden_dim=64, n_layers=3):
+        super().__init__()
+        self.input_layer = nn.Linear(input_dim, hidden_dim)
+        nn.init.xavier_uniform_(self.input_layer.weight)
+        nn.init.zeros_(self.input_layer.bias)
+
+        self.blocks = nn.ModuleList([
+            DGMBlock(input_dim, hidden_dim) for _ in range(n_layers)
+        ])
+
+        self.output_layer = nn.Linear(hidden_dim, 1)
+        self.softplus = nn.Softplus()
+        nn.init.xavier_uniform_(self.output_layer.weight)
+        nn.init.zeros_(self.output_layer.bias)
+
+        self.act = nn.Tanh()
+
+    def forward(self, x):
+        s = self.act(self.input_layer(x))
+        s_first = s
+
+        for block in self.blocks:
+            s = block(x, s, s_first)
+
+        return torch.exp(self.output_layer(s))
+
 
 # train
 if __name__ == "__main__":
-    batch, epochs, lr = 2048, 20000, 2e-4
-    eps0, eps_min = 0.5, 0.05
-    log_every = 500
+    batch_sz, epochs, lr = 2048, 15000, 2e-5
+    eps0, eps_min        = 0.5, 0.02         
+    log_step             = 500
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    net = MDNpdf(hidden=64).to(device)
-    optimizer = optim.Adam(net.parameters(), lr=lr)
+    net    = DGMNet(hidden_dim=128, n_layers=5).to(device)
+    optim_ = optim.Adam(net.parameters(), lr=lr)
 
-    start = time.time()
-    for ep in range(1, epochs+1):
-        eps = max(eps_min, eps0*(0.9995**ep))
-        X_in,X_ic,X_b,S_mass = sampler(batch, eps, device)
+    t0 = time.time()
+    for ep in range(1, epochs + 1):
+        eps = max(eps_min, eps0 * (0.999 ** ep))
+        X_in, X_ic, X_bc, y_mass = sampler(batch_sz, eps, device)
 
-        loss_tot, loss_pde, loss_ic, loss_bc, loss_mass, loss_mle = \
-            loss_fn(net, X_in, X_ic, X_b, S_mass, eps)
+        loss_tot, lpde, lic, lbc, lmass = loss_fn(net, X_in, X_ic, X_bc, y_mass, eps)
+        optim_.zero_grad(); loss_tot.backward(); optim_.step()
 
-        optimizer.zero_grad()
-        loss_tot.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
-        optimizer.step()
+        if ep % log_step == 0:
+            print(f"Ep {ep:6d} | total={loss_tot.item():.3e} | PDE={lpde.item():.1e} | "
+                  f"IC={lic.item():.1e} | BC={lbc.item():.1e} | Mass={lmass.item():.1e} | eps={eps:.3f}")
 
-        if ep % log_every == 0:
-            print(f"Ep {ep:6d} | total={loss_tot.item():.3e} | "
-                  f"PDE={loss_pde.item():.2e} | IC={loss_ic.item():.2e} | "
-                  f"BC={loss_bc.item():.2e} | Mass={loss_mass.item():.2e} | "
-                  f"MLE={loss_mle.item():.2e}")
-
-    print(f"Training finished in {time.time()-start:.1f}s")
-    torch.save(net.state_dict(), "MDN_forward.pth")
+    print(f"Training done in {time.time() - t0:.1f}s — saving model…")
+    torch.save(net.state_dict(), "DGM_forward_log.pth")
