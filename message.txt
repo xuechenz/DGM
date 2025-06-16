@@ -1,2 +1,1 @@
-Thanks, Scott! I really appreciate you taking the time to walk me through the concepts — it’s been super helpful. I feel it’s part of my role to do this kind of background research, and I’m learning a lot in the process. Please don’t hesitate to let me know if there’s anything else I can look into!
-
+Hi Scott, I have changed Hagan formula from Log-Normal to Normal, here is the result of comparision. I will move on to MDN to see if it can fit the forward PDE. I want to try the mix use of PDE loss and MLE loss together. I think MDN can capture the log-normal shape and the DGM can detail this shape, I will do a quick experiment, if it cannot work, I will move on to the new paper.
