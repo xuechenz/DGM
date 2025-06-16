@@ -67,8 +67,6 @@ DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MODEL_PATH = "DGM_forward_log.pth"
 
 net = DGMNet().to(DEVICE)
-if not os.path.isfile(MODEL_PATH):
-    raise FileNotFoundError("请把训练好的 DGM_forward_log.pth 放到当前目录")
 net.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE)); net.eval()
 
 t_vals = torch.linspace(0.01, T_final, N_T, device=DEVICE)     
