@@ -1,0 +1,107 @@
+import math
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+net.eval()
+def hagan_iv(F, K, T, alpha, beta, rho, nu,
+             eps=1e-12, sigma_cap=3.0):
+    if abs(F - K) < eps:  
+        term1 = alpha / (F ** (1 - beta))
+        term2 = (((1 - beta) ** 2) / 24) * alpha ** 2 / F ** (2 - 2 * beta)
+        term2 += (rho * beta * nu * alpha) / (4 * F ** (1 - beta))
+        term2 += ((2 - 3 * rho ** 2) * nu ** 2) / 24
+        sigma = term1 * (1 + term2 * T)
+        return min(sigma, sigma_cap)
+
+    FK     = F * K
+    logFK  = math.log(F / K)
+    z      = (nu / alpha) * FK ** ((1 - beta) / 2) * logFK
+    x_z_n  = math.sqrt(1 - 2 * rho * z + z * z) + z - rho
+    x_z_d  = 1 - rho
+    x_z    = math.log((x_z_n + eps) / (x_z_d + eps))
+    z      = z + eps
+
+    A = alpha / (
+        FK ** ((1 - beta) / 2)
+        * (1 + ((1 - beta) ** 2 / 24) * logFK ** 2
+           + ((1 - beta) ** 4 / 1920) * logFK ** 4)
+    )
+    B = z / x_z
+    C = 1 + (
+        ((1 - beta) ** 2 / 24) * (alpha ** 2) / (FK ** (1 - beta))
+        + (rho * beta * nu * alpha) / (4 * FK ** ((1 - beta) / 2))
+        + ((2 - 3 * rho ** 2) * nu ** 2) / 24
+    ) * T
+    sigma = A * B * C
+    return min(sigma, sigma_cap)
+
+def bs_call(F, K, T, sigma):
+    if sigma < 1e-12:
+        return max(F - K, 0.0)
+    d1 = (math.log(F / K) + 0.5 * sigma ** 2 * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    return F * norm.cdf(d1) - K * norm.cdf(d2)
+
+rep_sets = [
+    (0.7, 0.4, 0.0),  
+    (0.5, 0.2, -0.5), 
+    (0.9, 0.6, 0.5),  
+]
+alpha0, K0 = 0.10, 100.0
+T = 1.0
+
+F_vals = np.linspace(60, 140, 100, dtype=np.float32)
+t_vals = np.linspace(0.0, T, 50, dtype=np.float32)
+Fg, Tg = np.meshgrid(F_vals, t_vals)
+
+for beta0, nu0, rho0 in rep_sets:
+    F_flat = torch.tensor(Fg.ravel(), device=DEVICE).unsqueeze(1)
+    t_flat = torch.tensor(Tg.ravel(), device=DEVICE).unsqueeze(1)
+    a_flat = torch.full_like(F_flat, alpha0)
+    K_flat = torch.full_like(F_flat, K0)
+    b_flat = torch.full_like(F_flat, beta0)
+    nu_flat = torch.full_like(F_flat, nu0)
+    rho_flat = torch.full_like(F_flat, rho0)
+
+    X = torch.cat([t_flat, F_flat, a_flat, K_flat, b_flat, nu_flat, rho_flat], dim=1).float()
+
+    with torch.no_grad():
+        U_flat = net(X).cpu().numpy()
+    Usurf = U_flat.reshape(Fg.shape)
+
+    Hsurf = np.zeros_like(Usurf, dtype=np.float32)
+    for i, t0 in enumerate(t_vals):
+        tau = T - t0
+        if tau < 1e-8:
+            Hsurf[i, :] = np.maximum(F_vals - K0, 0.0)
+        else:
+            Hsurf[i, :] = [
+                bs_call(float(F_vals[j]), K0, tau,
+                        hagan_iv(float(F_vals[j]), K0, tau,
+                                 alpha0, beta0, rho0, nu0))
+                for j in range(len(F_vals))
+            ]
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot_surface(Fg, Tg, Usurf, cmap='viridis', edgecolor='none')
+    ax.set_title(f'DGM Surface β={beta0}, ν={nu0}, ρ={rho0}')
+    ax.set_xlabel('F'); ax.set_ylabel('t'); ax.set_zlabel('Price')
+    plt.show()
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot_surface(Fg, Tg, Hsurf, cmap='plasma', edgecolor='none')
+    ax.set_title(f'Hagan+BS Surface β={beta0}, ν={nu0}, ρ={rho0}')
+    ax.set_xlabel('F'); ax.set_ylabel('t'); ax.set_zlabel('Price')
+    plt.show()
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot_surface(Fg, Tg, np.abs(Usurf - Hsurf), cmap='inferno', edgecolor='none')
+    ax.set_title(f'Error Surface β={beta0}, ν={nu0}, ρ={rho0}')
+    ax.set_xlabel('F'); ax.set_ylabel('t'); ax.set_zlabel('Abs Error')
+    plt.show()
