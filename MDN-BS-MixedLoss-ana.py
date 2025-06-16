@@ -1,66 +1,100 @@
-import math, torch, torch.nn as nn, torch.nn.functional as F
-import numpy as np
-import matplotlib.pyplot as plt
-
-class ResBlock(nn.Module):
-    def __init__(self, d):
-        super().__init__()
-        self.fc1, self.fc2 = nn.Linear(d, d), nn.Linear(d, d)
-    def forward(self, x):
-        return torch.tanh(self.fc2(torch.tanh(self.fc1(x))) + x)
-
-class MDNpdf(nn.Module):
-    def __init__(self, K=10, hidden=64, n_layers=5, S0=100.0):
-        super().__init__()
-        self.K, self.S0 = K, S0
-        self.inp   = nn.Linear(2, hidden)
-        self.blocks= nn.ModuleList([ResBlock(hidden) for _ in range(n_layers)])
-        self.out   = nn.Linear(hidden, 3*K)
-    def _split(self, raw):
-        logits, mu_hat, logsig_hat = torch.split(raw, self.K, -1)
-        pi    = torch.softmax(logits, -1)
-        mu    = self.S0 * (1 + 0.3*torch.tanh(mu_hat))
-        sigma = 0.2*self.S0 * F.softplus(logsig_hat) + 1e-2
-        return pi, mu, sigma
-    def forward(self, x):
-        t,S = x[:,:1], x[:,1:2]
-        S_scaled = (S-self.S0)/self.S0
-        h = torch.tanh(self.inp(torch.cat([t, S_scaled],1)))
-        for blk in self.blocks: h = blk(h)
-        pi, mu, sigma = self._split(self.out(h))
-        S = S.expand_as(mu)
-        comp = torch.exp(-0.5*((S-mu)/sigma)**2)/(sigma*math.sqrt(2*math.pi))
-        return (pi*comp).sum(-1, keepdim=True)
-    def log_pdf(self,x):
-        return torch.log(self(x)+1e-12)
-
-DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = "MDN_forward.pth"       
-net = MDNpdf().to(DEVICE)
-net.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
-net.eval()
+import os, math, torch, numpy as np, matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  
 
 T_final = 1.0
-S_min, S_max = 10.0, 180.0
-N_T, N_S = 80, 120               
+S0      = 100.0
+y_min, y_max = -4.0, math.log(200/100)   
+N_T, N_S = 80, 120                      
+class DGMBlock(nn.Module):
+    def __init__(self, in_dim: int, hidden_dim: int):
+        super().__init__()
+        self.U_z = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_z = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
-t_vals = torch.linspace(0.01, T_final, N_T)
-S_vals = torch.linspace(S_min, S_max, N_S)
-Tg, Sg = torch.meshgrid(t_vals, S_vals, indexing="ij")   
-grid   = torch.cat([Tg.reshape(-1,1), Sg.reshape(-1,1)], 1).to(DEVICE)
+        self.U_g = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_g = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        self.U_r = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_r = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        self.U_h = nn.Linear(in_dim, hidden_dim, bias=True)
+        self.W_h = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        self.act = nn.Tanh()
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x, s_prev, s_first):
+        z = self.act(self.U_z(x) + self.W_z(s_prev))
+        g = self.act(self.U_g(x) + self.W_g(s_first))
+        r = self.act(self.U_r(x) + self.W_r(s_prev))
+        h = self.act(self.U_h(x) + self.W_h(s_prev * r))
+
+        s_next = (1.0 - g) * h + z * s_prev
+        return s_next
+class DGMNet(nn.Module):
+    def __init__(self, input_dim=2, hidden_dim=128, n_layers=5):
+        super().__init__()
+        self.input_layer = nn.Linear(input_dim, hidden_dim)
+        nn.init.xavier_uniform_(self.input_layer.weight)
+        nn.init.zeros_(self.input_layer.bias)
+
+        self.blocks = nn.ModuleList([
+            DGMBlock(input_dim, hidden_dim) for _ in range(n_layers)
+        ])
+
+        self.output_layer = nn.Linear(hidden_dim, 1)
+        self.softplus = nn.Softplus()
+        nn.init.xavier_uniform_(self.output_layer.weight)
+        nn.init.zeros_(self.output_layer.bias)
+
+        self.act = nn.Tanh()
+
+    def forward(self, x):
+        s = self.act(self.input_layer(x))
+        s_first = s
+
+        for block in self.blocks:
+            s = block(x, s, s_first)
+
+        return torch.exp(self.output_layer(s))
+
+DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+MODEL_PATH = "DGM_forward_log.pth"
+
+net = DGMNet().to(DEVICE)
+if not os.path.isfile(MODEL_PATH):
+    raise FileNotFoundError("请把训练好的 DGM_forward_log.pth 放到当前目录")
+net.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE)); net.eval()
+
+t_vals = torch.linspace(0.01, T_final, N_T, device=DEVICE)     
+y_vals = torch.linspace(y_min, y_max, N_S, device=DEVICE)
+Tg, Yg = torch.meshgrid(t_vals, y_vals, indexing="ij")
+grid   = torch.cat([Tg.reshape(-1,1), Yg.reshape(-1,1)], 1)
 
 with torch.no_grad():
-    pdf = torch.exp(net.log_pdf(grid)).cpu().numpy().reshape(N_T, N_S)
+    q  = net(grid).cpu().numpy().reshape(N_T, N_S)             
+Sg = S0 * torch.exp(Yg).cpu().numpy()
+p  = q / Sg                                                    
+
+cap = np.quantile(p, 0.995)
+p_clip = np.clip(p, 0, cap)
 
 fig = plt.figure(figsize=(8,6))
-ax  = fig.add_subplot(111, projection='3d')
-surf = ax.plot_surface(Sg.numpy(), Tg.numpy(), pdf,
-                       rstride=1, cstride=1, linewidth=0,
-                       antialiased=False, cmap="viridis")
-
+ax  = fig.add_subplot(111, projection="3d")
+surf = ax.plot_surface(Sg, Tg.cpu(), p_clip,
+                       rstride=1, cstride=1,
+                       cmap="viridis", linewidth=0, antialiased=True)
 ax.set_xlabel("Stock Price  $S$")
 ax.set_ylabel("Time  $t$")
+ax.set_zlim3d(0, 0.3)
 ax.set_zlabel("Density  $p(t,S)$")
-ax.set_title("Forward Density learned by MDN")
+ax.set_title("Forward Density learned by DGM")
+ax.view_init(elev=30, azim=-135)
+fig.colorbar(surf, shrink=0.6)
 plt.tight_layout()
 plt.show()
