@@ -1,1 +1,9 @@
-Hi Scott! Huge progress! I did not use the new paper method, instead, I realized that we could convert the Geometric Brownian Motion of S to Arithmetic Brownian Motion by taking log(S/S0) as the input to factor out the S from the SDE. This would allows us convert the domain of S from (0, S_Max) to (-inf, inf), which renders extra flexibility to our neural net. Also, since I realized that we need to anchor the general shape of our PDF, so for the inner point sampling, I sampled 0.7 along the monte carlo path and 0.3 specifically uniformly sampled from the main area (0, T) * (S_Max - S_Min), so in the later time steps, we still have enough points to anchor the general shape. The whole design of loss function and net was maintain the same as the DGM paper. Here is the convergence at each time steps with the log-normal analytical solution. 
+I’ve implemented the reference point method. The best result I’ve obtained so far was using only the PDE loss and Ref loss on the DGM network. It provides a reasonably good fit overall, but the network tends to underfit at early time steps.
+
+I then added the initial condition loss, hoping it would improve the early-time behavior, but it ended up distorting the solution shape. After that, I tried combining all the DGM loss terms—IC, BC, PDE, Ref, and Mass—but the solution became quite unstable. One potential solution could be fine-tuning the weights for each term, but that would be time-consuming and difficult to scale or generalize.
+
+I also experimented with the MDN network using PDE + Ref loss, but since MDN models the density as a mixture of 10 Gaussians, the gradients are difficult to backpropagate through the PDE and Ref terms, and the performance was not ideal. I’ve also tried importance sampling at early time steps, but that didn’t improve the results either.
+
+For the next step, I plan to explore methods to better handle the underfitting issue at early time steps—possibly through modified sampling strategies or network structure adjustments.
+
+Sorry for the late message—hope you have a great start to your day!
