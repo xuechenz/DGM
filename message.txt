@@ -1,9 +1,1 @@
-I’ve implemented the reference point method. The best result I’ve obtained so far was using only the PDE loss and Ref loss on the DGM network. It provides a reasonably good fit overall, but the network tends to underfit at early time steps.
-
-I then added the initial condition loss, hoping it would improve the early-time behavior, but it ended up distorting the solution shape. After that, I tried combining all the DGM loss terms—IC, BC, PDE, Ref, and Mass—but the solution became quite unstable. One potential solution could be fine-tuning the weights for each term, but that would be time-consuming and difficult to scale or generalize.
-
-I also experimented with the MDN network using PDE + Ref loss, but since MDN models the density as a mixture of 10 Gaussians, the gradients are difficult to backpropagate through the PDE and Ref terms, and the performance was not ideal. I’ve also tried importance sampling at early time steps, but that didn’t improve the results either.
-
-For the next step, I plan to explore methods to better handle the underfitting issue at early time steps—possibly through modified sampling strategies or network structure adjustments.
-
-Sorry for the late message—hope you have a great start to your day!
+I have constructed the chain MDN network, and I used 3 hidden layers for each MDN. I trained each network one by one, and the next MDN net would initialize with the parameters from the previously trained MDN network. All the MDN network was trained solely depends on the REF loss, and now it converge closely with the analytical solution. I was thinking maybe we could ensemble these small networks to a large network to fill in the gap between each time steps by PDE loss to get the entire solution space. 
