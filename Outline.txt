@@ -1,0 +1,29 @@
+Introduction & Background
+• Traditional PDE methods struggle with high-dimensional option pricing problems.
+• Neural networks offer mesh-free, flexible alternatives for complex financial models.
+• Focus: Three deep learning approaches for option pricing and density estimation.
+Method 1: Deep BSDE
+• Black-Scholes: Forward simulation combined with backward optimization to fit Delta, resulting in the initial option price function u(S) at t=0.
+• SABR: Neural networks fit partial derivatives du/dF and du/dα along forward simulated paths, optimizing the backward stochastic differential equation (BSDE) residual to determine the initial price.
+• Key Advantage: Learns backward from known terminal payoffs.
+Method 2: Deep Galerkin Method (DGM)
+• Core Concept: A mesh-free method directly approximating PDE solutions at randomly sampled points.
+• Black-Scholes: Utilizes a 5-dimensional neural network u(t,S,r,σ,K), eliminating the need for grid discretization.
+• SABR: Implements a universal 7-dimensional pricing network u(t,F,α,K,β,ν,ρ) covering broad parameter ranges.
+• Key Advantage: Efficiently handles high-dimensional spaces, avoiding the curse of dimensionality.
+Method 3: Forward Equation (MDN)
+• Purpose: Solves the Fokker-Planck PDE to model the evolution of probability densities.
+• Implementation: Employs time-sliced Mixture Density Networks (MDNs), each corresponding to a discrete time slice t_i.
+• Process: Takes asset price SS as input, outputs a Gaussian mixture model to approximate the empirical density p(t_i,S).
+• Training: Uses Monte Carlo-generated reference densities and minimizes Mean Squared Error (MSE).
+Results & Conclusion
+• All three methods effectively approximate solutions to complex option pricing problems.
+• Each method is suited to distinct scenarios:
+Deep BSDE: backward optimization from known terminal payoffs.
+DGM: direct PDE solving in high-dimensional settings.
+MDN: precise density estimation through probabilistic modeling.
+• Deep learning approaches provide powerful, flexible alternatives to traditional numerical methods in financial modeling.
+
+
+
+
