@@ -1,5 +1,6 @@
-Hi Robert, sorry for the delay in sending the materials.
-My work laptop ran into a BitLocker recovery issue yesterday afternoon, and I couldn’t log in or reach IT before end of day.
-I just got access back after unlocking it twice through phone support.
-I’ve sent the summary, code, and all reference papers to your email.
-The issue still isn’t fully resolved, I have to call for recovery key IT support in order to every time log in. IT couldn’t fix it remotely and suggested I go in on Monday to get it replaced.
+Hi Robert, so sorry for the delay in sending the materials.
+My work laptop ran into a BitLocker recovery issue since yesterday afternoon, and I couldn’t log in or find IT before end of day.
+
+I just got access back through phone support. But the issue still isn’t fully resolved, I have to call for a recovery key each time to log in. IT couldn’t fix it and suggested I go in on Monday to get it replaced.
+
+I’ve sent the summary, code, and all reference papers to your email. The package is the current version as of Week 4. I’ll follow up with a complete package once everything is finalized.
