@@ -1,1 +1,25 @@
-Hi Robert, I’ll revise the definition of dimensionality to make sure there’s no confusion between PDE dimensionality and neural network input dimensionality. I’ll also clean up the structure of the slides a bit—especially the math part—to make the derivation clearer and easier to follow. Really appreciate all your guidance these days—it’s been super helpful. I’ve learned a lot from our discussions—thanks so much for your patience and support!
+Hi Robert,
+
+Hope you're having a great weekend. Please find attached the project materials:
+
+The three reference papers
+
+A summary write-up outlining the key methods, challenges, and decisions
+
+Cleaned-up notebooks for:
+  • Deep BSDE (Black-Scholes & SABR)
+  • DGM (Black-Scholes & SABR)
+  • MDN (Fokker-Planck under Black-Scholes)
+
+Paper4_DGMForward: a recent paper related to SABR density modeling
+
+The summary provides context on how the approaches evolved and the reasoning behind model design choices. The code has been reorganized and annotated for clarity.
+
+Quick update on the SABR MDN component: modeling the joint density appears to be quite challenging due to the need to predict a full covariance matrix. I found an alternative approach from a new paper (attached as Paper4_DGMForward) that uses a DGM-style network to approximate the CDF and derive the PDF via numerical differentiation. It appears more stable in principle, and I plan to explore whether this direction might be viable for the SABR case.
+
+Next week, I plan to schedule a few walkthroughs to fine-tune the presentation based on feedback.
+
+Thanks again for all your guidance!
+
+Best regards,
+Annie
