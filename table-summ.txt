@@ -1,0 +1,8 @@
+| Method       | Problem         | Training Result                                                                                         | Training Time       |
+|--------------|------------------|----------------------------------------------------------------------------------------------------------|---------------------|
+| BSDE         | BS Backward      | $u_S(t, S)$ for fixed parameters                                                                      |         ~3 min     |
+| BSDE         | SABR Backward    | $\nabla v(t, F, \alpha)$ for fixed parameters                                                         |                 ~4 min    |
+| DGM          | BS Backward      | $u(t, S, r, \sigma, K)$                                                                             |          ~7 min           |
+| DGM          | SABR Backward    | $v(t, F, \alpha, \beta, \rho, \nu, K) $                                                                |                  ~10 min   |
+| DGM forward  | BS Forward       | CDF $F_{S_t}(t, S, r, \sigma, S_0)$                                                                   |               ~15 min      |
+| DGM forward  | SABR Forward     | joint CDF $G_{F_t, \alpha_t}(t, F, \alpha, \beta, \rho, \nu, F_0, \alpha_0)$                         |       ~30 min              |
