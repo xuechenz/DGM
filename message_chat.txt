@@ -1,8 +1,0 @@
-Hi Robert, so sorry for the delay in sending the materials.
-My work laptop ran into a BitLocker recovery issue since yesterday afternoon, and I couldn’t log in or find IT before end of day.
-
-I just got access back through phone support. But the issue still isn’t fully resolved — I have to call for a recovery key each time to log in. IT couldn’t fix it and suggested I go in on Monday to get it replaced.
-
-I’ve sent the summary, code, and all reference papers to your email. The package is the current version as of Week 4, and I’ll follow up with a complete version once everything is finalized.
-
-I’ve also included a brief update on the SABR MDN component in the email — some recent findings that might lead to a more stable approach. Will share more once I’ve tested it further. Apologies for the weekend message, hope you’re having a relaxing weekend!
