@@ -1,2 +1,1 @@
-Yes, I actually tried calculating the covariance as part of the output for SABR and increased the number of Gaussians to 20, but it still didn't converge well. I can try increasing the number of output Gaussians further, but that would require a more complex network—both deeper and with a larger hidden dimension—to handle something like 300 outputs. I can use residual connection in inner layers to deal with the vanishing gradient problem. 
-
+I used learned full covariance matrices via Cholesky decomposition. The MDN outputs the mean, the Cholesky factors (3 parameters per Gaussian), and the mixture weights. 
