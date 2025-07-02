@@ -1,1 +1,11 @@
-I used learned full covariance matrices via Cholesky decomposition. The MDN outputs the mean, the Cholesky factors (3 parameters per Gaussian), and the mixture weights. 
+Subject: Thank You & Slide Deck Follow-Up
+
+Hi [Boss's Name],
+
+Thank you so much for your time and valuable feedback just now — both on the presentation content and your career advice. I really appreciate it.
+
+Attached is my current version of the slide deck. I’ll continue revising it based on your suggestions to better present the project.
+
+Thanks again!
+Best regards,
+Annie
