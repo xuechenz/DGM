@@ -1,0 +1,32 @@
+Subject: Project Package and Thank You
+
+Dear Robert,
+
+Hope you are doing well! I wanted to send you a quick update on the current status of my project as I wrap up my rotation with QMA.
+
+Project Status:
+
+Feynman-Kac PDEs (Deep BSDE & DGM): For both Black-Scholes and SABR models, the networks are now stable and generate accurate results with short training times.
+
+Fokker-Planck PDE (DGM): The Black-Scholes version is working well. The SABR model has stabilized, though training time remains long. I plan to continue fine-tuning over the weekend to further improve its efficiency and accuracy.
+
+Presentation: I’m also continuing to refine my final presentation to ensure it’s well-prepared for the global QMA audience.
+
+Attachments:
+
+Code for all current methods
+
+Key reference papers
+
+Updated presentation slides
+
+A short personal thank-you letter
+
+Alongside the project materials, I’ve attached a brief letter of thanks—I wanted to take a moment to reflect on how much I’ve learned from you and how grateful I am for your support this summer.
+
+Thank you again for the opportunity to work with you and the QMA team. It’s been a truly rewarding experience.
+Wishing you a restful and enjoyable cruise vacation!
+
+Warm regards,
+Annie
+
